@@ -1,6 +1,6 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
-import { adminDb } from "./firebase-admin";
+import { adminDb } from "./firebase-admin.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   console.log("API START: create-pix");
