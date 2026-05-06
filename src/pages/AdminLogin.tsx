@@ -31,15 +31,19 @@ export default function AdminLogin() {
       const user = result.user;
       if (!user.email) throw new Error("Email não encontrado na conta Google.");
 
+      // Master admins bypass list
+      const masterAdmins = ['luiz.uehara1@gmail.com', 'lopesvinicius199@gmail.com'];
+      const isMaster = masterAdmins.includes(user.email);
+
       const adminRef = doc(db, "admins", user.email);
       const adminSnap = await getDoc(adminRef);
 
-      if (!adminSnap.exists()) {
+      if (!adminSnap.exists() && !isMaster) {
         await signOut(auth);
         throw new Error("Admin não encontrado");
       }
 
-      if (adminSnap.data().ativo !== true) {
+      if (!isMaster && adminSnap.exists() && adminSnap.data().ativo !== true) {
         await signOut(auth);
         throw new Error("Admin inativo");
       }

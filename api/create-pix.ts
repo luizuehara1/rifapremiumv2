@@ -39,6 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       installments: 1,
       external_reference: `REF-${Date.now()}`,
+      notification_url: "https://rifapremiumv2.vercel.app/api/webhook",
     };
 
     console.log("Requesting Mercado Pago API...");
