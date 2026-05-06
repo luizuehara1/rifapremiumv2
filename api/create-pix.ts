@@ -3,12 +3,14 @@ import axios from 'axios';
 import { adminDb } from "../lib/firebase-admin";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  console.log("API START: create-pix");
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
-  console.log("ENV TOKEN EXISTS:", !!accessToken);
+  console.log("TOKEN EXISTS:", !!accessToken);
+  console.log("BODY:", req.body);
 
   if (!accessToken) {
     return res.status(500).json({ 
@@ -39,6 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       external_reference: `REF-${Date.now()}`,
     };
 
+    console.log("Requesting Mercado Pago API...");
     const response = await axios.post('https://api.mercadopago.com/v1/payments', paymentData, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -52,6 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const paymentId = result.id?.toString();
 
     if (!paymentId) throw new Error('ID de pagamento não retornado pelo Mercado Pago');
+    console.log("Payment created successfully:", paymentId);
 
     // Salvar Pedido no Firestore
     const pedidoData = {
@@ -79,6 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }, { merge: true });
     }
     await batch.commit();
+    console.log("Reservation success in Firestore");
 
     return res.status(200).json({
       id: paymentId,
@@ -88,12 +93,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
   } catch (error: any) {
+    console.error('API ERROR:', error);
     const apiError = error.response?.data || error.message;
-    console.error('Mercado Pago API Error:', JSON.stringify(apiError, null, 2));
     
     return res.status(error.response?.status || 500).json({ 
-      error: 'Erro ao criar pagamento no Mercado Pago', 
-      details: apiError 
+      error: error.message || 'Erro ao processar checkout',
+      details: apiError,
+      stack: error.stack
     });
   }
 }
