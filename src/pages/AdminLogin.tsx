@@ -1,10 +1,10 @@
-import { signInWithPopup } from 'firebase/auth';
-import { auth, googleProvider } from '../firebase/config';
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { auth } from '../firebase/config';
 import { checkAdmin } from '../firebase/services';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { motion } from 'motion/react';
-import { ShieldAlert, LogIn, ChevronRight } from 'lucide-react';
+import { ShieldAlert, ChevronRight } from 'lucide-react';
 
 export default function AdminLogin() {
   const [loading, setLoading] = useState(false);
@@ -12,23 +12,44 @@ export default function AdminLogin() {
   const navigate = useNavigate();
 
   const handleLogin = async () => {
-    setLoading(true);
-    setError(null);
+    if (loading) return;
+
     try {
-      const result = await signInWithPopup(auth, googleProvider);
+      setLoading(true);
+      setError(null);
+
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({
+        prompt: "select_account"
+      });
+
+      const result = await signInWithPopup(auth, provider);
       const email = result.user.email;
-      
-      const isAdmin = await checkAdmin(email || '');
-      
+
+      if (!email) {
+        throw new Error("Email não encontrado na conta Google.");
+      }
+
+      const isAdmin = await checkAdmin(email);
+
       if (isAdmin) {
         navigate('/admin');
       } else {
         await auth.signOut();
-        setError('Acesso negado. Você não é um administrador autorizado.');
+        throw new Error("Acesso negado. Você não é um administrador autorizado.");
       }
     } catch (err: any) {
-      console.error(err);
-      setError('Ocorreu um erro ao tentar fazer login.');
+      console.error('Login Error:', err);
+
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+        setError('Login cancelado. O popup foi fechado antes da autenticação.');
+      } else if (err.code === 'auth/popup-blocked') {
+        setError('O popup de login foi bloqueado pelo seu navegador. Por favor, libere os popups para este site.');
+      } else if (err.code === 'auth/operation-not-supported-in-this-environment') {
+        setError('O login via popup não é suportado neste ambiente (iframe). Tente abrir o site diretamente em uma nova aba.');
+      } else {
+        setError(err.message || 'Falha ao autenticar. Tente novamente.');
+      }
     } finally {
       setLoading(false);
     }
