@@ -18,91 +18,118 @@ async function startServer() {
 
   // API Routes
   app.post('/api/create-pix', async (req, res) => {
-    if (!accessToken) {
-      console.log('Mercado Pago Token: Não configurado');
+    const currentToken = process.env.MERCADO_PAGO_ACCESS_TOKEN?.trim();
+
+    if (!currentToken) {
+      console.error('Mercado Pago Token: NOT CONFIGURED');
       return res.status(500).json({ 
-        error: "MERCADO_PAGO_ACCESS_TOKEN não configurado no painel de Secrets." 
+        error: "MERCADO_PAGO_ACCESS_TOKEN não encontrado. Por favor, adicione-o nas Configurações (Secrets)." 
       });
     }
 
-    console.log('Mercado Pago Token: Existe');
+    console.log('Mercado Pago Token: Found (length: ' + currentToken.length + ')');
 
     try {
       const { numeros, valor, nome, telefone } = req.body;
 
       if (!numeros || !valor || !nome || !telefone) {
-        return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
+        return res.status(400).json({ error: 'Campos obrigatórios: numeros, valor, nome, telefone' });
       }
 
       const paymentData = {
         transaction_amount: Number(valor),
-        description: `Rifa Premium - Números: ${numeros.join(', ')}`,
+        description: `Rifa Premium - Números: ${Array.isArray(numeros) ? numeros.join(', ') : numeros}`,
         payment_method_id: 'pix',
         payer: {
-          email: `${telefone}@temp.com`,
+          email: `${telefone.replace(/\D/g, '')}@test-customer.com`, // Sanitized email
           first_name: nome,
+          // Identification is often required for PIX in MP Brazil
+          identification: {
+            type: 'CPF',
+            number: '00000000000' // Placeholder if not provided, though real is better
+          }
         },
-        external_reference: `${Date.now()}`,
+        installments: 1,
+        external_reference: `REF-${Date.now()}`,
       };
 
-      const response = await axios.post('https://api.mercadopago.com/v1/payments', paymentData, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          'X-Idempotency-Key': `${Date.now()}`
-        }
-      });
+      try {
+        const response = await axios.post('https://api.mercadopago.com/v1/payments', paymentData, {
+          headers: {
+            'Authorization': `Bearer ${currentToken}`,
+            'Content-Type': 'application/json',
+            'X-Idempotency-Key': `IDEMP-${Date.now()}-${Math.random().toString(36).substring(7)}`
+          },
+          timeout: 10000 // 10s timeout
+        });
 
-      const result = response.data;
-      const paymentId = result.id?.toString();
+        const result = response.data;
+        const paymentId = result.id?.toString();
 
-      // Salvar Pedido no Firestore
-      const pedidoData = {
-        paymentId,
-        numeros,
-        valor: Number(valor),
-        nome,
-        telefone,
-        status: 'pendente',
-        criadoEm: new Date(),
-      };
+        if (!paymentId) throw new Error('Payment ID not returned from Mercado Pago');
 
-      await adminDb.collection('pedidos').add(pedidoData);
-
-      // Também reservar os números
-      const batch = adminDb.batch();
-      for (const n of numeros) {
-        const numRef = adminDb.collection('numeros').doc(n.toString());
-        batch.set(numRef, {
-          numero: n,
-          status: 'reservado',
+        // Salvar Pedido no Firestore
+        const pedidoData = {
+          paymentId,
+          numeros,
+          valor: Number(valor),
           nome,
           telefone,
-          updatedAt: new Date()
-        }, { merge: true });
-      }
-      await batch.commit();
+          status: 'pendente',
+          criadoEm: new Date(),
+        };
 
-      res.json({
-        id: paymentId,
-        qr_code: result.point_of_interaction?.transaction_data?.qr_code,
-        qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
-        payment_id: paymentId
-      });
-    } catch (error: any) {
-      const apiError = error.response?.data || error.message;
-      console.error('Error creating PIX:', apiError);
-      
-      if (error.response?.status === 401) {
-        return res.status(401).json({ 
-          error: 'Erro de autenticação com o Mercado Pago. Verifique o Access Token.',
-          details: apiError
+        await adminDb.collection('pedidos').add(pedidoData);
+
+        // Reservar os números
+        const batch = adminDb.batch();
+        for (const n of (Array.isArray(numeros) ? numeros : [numeros])) {
+          const numRef = adminDb.collection('numeros').doc(n.toString());
+          batch.set(numRef, {
+            numero: n,
+            status: 'reservado',
+            nome,
+            telefone,
+            updatedAt: new Date()
+          }, { merge: true });
+        }
+        await batch.commit();
+
+        return res.json({
+          id: paymentId,
+          qr_code: result.point_of_interaction?.transaction_data?.qr_code,
+          qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
+          payment_id: paymentId
+        });
+
+      } catch (axiosError: any) {
+        const status = axiosError.response?.status;
+        const data = axiosError.response?.data;
+        
+        console.error('Mercado Pago API Error:', {
+          status,
+          message: axiosError.message,
+          data
+        });
+
+        if (status === 401) {
+          return res.status(401).json({ 
+            error: 'Token do Mercado Pago Inválido ou Expirado.',
+            details: data 
+          });
+        }
+
+        return res.status(status || 500).json({ 
+          error: 'Erro na API do Mercado Pago', 
+          details: data || axiosError.message 
         });
       }
 
+    } catch (error: any) {
+      console.error('Internal Server Error:', error);
       res.status(500).json({ 
-        error: 'Erro ao criar pagamento no Mercado Pago',
-        details: apiError
+        error: 'Erro interno ao processar pedido',
+        details: error.message
       });
     }
   });
