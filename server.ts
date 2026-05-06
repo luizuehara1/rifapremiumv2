@@ -5,10 +5,10 @@ import path from 'path';
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 
 import axios from 'axios';
-import { adminDb } from './lib/firebase-admin';
+import { adminDb } from './lib/firebase-admin.ts';
 
-import createPixHandler from './api/create-pix';
-import webhookHandler from './api/webhook';
+import createPixHandler from './api/create-pix.ts';
+import webhookHandler from './api/webhook.ts';
 
 async function startServer() {
   const app = express();
