@@ -1,6 +1,6 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
-import { adminDb } from "../lib/firebase-admin";
+import { adminDb } from "./firebase-admin";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   console.log("API START: webhook");
