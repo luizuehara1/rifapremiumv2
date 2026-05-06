@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "Numero": {
+      "title": "Número da Rifa",
+      "description": "Represents a raffle number status",
+      "type": "object",
+      "properties": {
+        "numero": { "type": "number" },
+        "status": { "type": "string", "enum": ["disponivel", "reservado", "pago", "bloqueado"] },
+        "reservadoPor": { "type": "string" },
+        "timestampReserva": { "type": "number" }
+      },
+      "required": ["numero", "status"]
+    },
+    "Pedido": {
+      "title": "Pedido de Compra",
+      "description": "Represents a purchase attempt",
+      "type": "object",
+      "properties": {
+        "paymentId": { "type": "string" },
+        "numeros": { "type": "array", "items": { "type": "number" } },
+        "valor": { "type": "number" },
+        "status": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "numeros/{numeroId}": {
+      "schema": "Numero",
+      "description": "Collection of raffle numbers 1-100"
+    },
+    "pedidos/{pedidoId}": {
+      "schema": "Pedido",
+      "description": "Collection of purchase orders"
+    },
+    "admins/{email}": {
+      "schema": "object",
+      "description": "Authorized administrator emails"
+    }
+  }
+}

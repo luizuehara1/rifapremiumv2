@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  --color-neon-green: #00FF00;
+  --color-dark-bg: #050505;
+  --color-card-bg: #111111;
+  --color-border: #1a1a1a;
+  
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-display: 'Anton', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-dark-bg text-white antialiased;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-neon-green text-black font-bold py-3 px-6 rounded-none transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100;
+  }
+  
+  .btn-outline {
+    @apply border border-neon-green text-neon-green font-bold py-3 px-6 rounded-none transition-all hover:bg-neon-green/10 active:scale-95;
+  }
+  
+  .card-brutal {
+    @apply bg-card-bg border border-border p-6 rounded-none;
+  }
+  
+  .neon-glow {
+    box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+  }
+  
+  .neon-text-glow {
+    text-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #050505;
+}
+::-webkit-scrollbar-thumb {
+  background: #1a1a1a;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #333;
+}
