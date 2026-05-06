@@ -1,6 +1,13 @@
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { auth } from '../firebase/config';
-import { checkAdmin } from '../firebase/services';
+import { 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut 
+} from 'firebase/auth';
+import { 
+  doc, 
+  getDoc 
+} from 'firebase/firestore';
+import { auth, db } from '../firebase/config';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { motion } from 'motion/react';
@@ -11,7 +18,7 @@ export default function AdminLogin() {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  const handleLogin = async () => {
+  const handleGoogleLogin = async () => {
     if (loading) return;
 
     try {
@@ -19,36 +26,31 @@ export default function AdminLogin() {
       setError(null);
 
       const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({
-        prompt: "select_account"
-      });
-
       const result = await signInWithPopup(auth, provider);
-      const email = result.user.email;
+      
+      const user = result.user;
+      if (!user.email) throw new Error("Email não encontrado na conta Google.");
 
-      if (!email) {
-        throw new Error("Email não encontrado na conta Google.");
+      const adminRef = doc(db, "admins", user.email);
+      const adminSnap = await getDoc(adminRef);
+
+      if (!adminSnap.exists()) {
+        await signOut(auth);
+        throw new Error("Admin não encontrado");
       }
 
-      const isAdmin = await checkAdmin(email);
-
-      if (isAdmin) {
-        navigate('/admin');
-      } else {
-        await auth.signOut();
-        throw new Error("Acesso negado. Você não é um administrador autorizado.");
+      if (adminSnap.data().ativo !== true) {
+        await signOut(auth);
+        throw new Error("Admin inativo");
       }
+
+      navigate("/admin");
     } catch (err: any) {
-      console.error('Login Error:', err);
-
-      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-        setError('Login cancelado. O popup foi fechado antes da autenticação.');
-      } else if (err.code === 'auth/popup-blocked') {
-        setError('O popup de login foi bloqueado pelo seu navegador. Por favor, libere os popups para este site.');
-      } else if (err.code === 'auth/operation-not-supported-in-this-environment') {
-        setError('O login via popup não é suportado neste ambiente (iframe). Tente abrir o site diretamente em uma nova aba.');
+      console.error(err);
+      if (err.code === 'auth/popup-closed-by-user') {
+        setError('Login cancelado ou popup fechado.');
       } else {
-        setError(err.message || 'Falha ao autenticar. Tente novamente.');
+        setError(err.message || 'Erro ao realizar login.');
       }
     } finally {
       setLoading(false);
@@ -56,13 +58,13 @@ export default function AdminLogin() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-[#050505]">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,0,0.1),transparent_50%)]" />
       
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md card-brutal relative z-10"
+        className="w-full max-w-md card-brutal relative z-10 bg-black/80 backdrop-blur-xl"
       >
         <div className="flex flex-col items-center text-center space-y-6">
           <div className="w-20 h-20 bg-neon-green/10 border border-neon-green/20 flex items-center justify-center rounded-full">
@@ -85,7 +87,7 @@ export default function AdminLogin() {
           )}
 
           <button
-            onClick={handleLogin}
+            onClick={handleGoogleLogin}
             disabled={loading}
             className="w-full btn-primary h-16 flex items-center justify-center gap-3 group text-xl"
           >

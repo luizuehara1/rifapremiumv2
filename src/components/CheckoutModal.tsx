@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Copy, CheckCircle2, Phone, User, QrCode } from 'lucide-react';
+import { X, Copy, CheckCircle2, Phone, User, QrCode, Loader2 } from 'lucide-react';
 import { formatCurrency } from '../lib/utils';
 import axios from 'axios';
-import { createPedido, reservarNumeros } from '../firebase/services';
+import { db } from '../firebase/config';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -13,51 +14,55 @@ interface CheckoutModalProps {
 }
 
 export default function CheckoutModal({ isOpen, onClose, selectedNumbers, totalPrice }: CheckoutModalProps) {
-  const [step, setStep] = useState<'info' | 'payment'>('info');
+  const [step, setStep] = useState<'info' | 'payment' | 'success'>('info');
   const [loading, setLoading] = useState(false);
-  const [pixData, setPixData] = useState<{ qr_code: string; qr_code_base64: string; ticket_url: string; id: string } | null>(null);
-  const [formData, setFormData] = useState({ nome: '', telefone: '', cpf: '' });
+  const [pixData, setPixData] = useState<{ qr_code: string; qr_code_base64: string; id: string } | null>(null);
+  const [formData, setFormData] = useState({ nome: '', telefone: '' });
   const [copied, setCopied] = useState(false);
+
+  // Monitor payment status
+  useEffect(() => {
+    if (pixData?.id && isOpen) {
+      const q = query(
+        collection(db, 'pedidos'),
+        where('paymentId', '==', pixData.id.toString())
+      );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        if (!snapshot.empty) {
+          const pedido = snapshot.docs[0].data();
+          if (pedido.status === 'pago') {
+            setStep('success');
+            // Fechar após 5 segundos se estiver no sucesso
+            setTimeout(() => {
+              window.location.reload(); // Recarrega para limpar seleção e atualizar grid
+            }, 5000);
+          }
+        }
+      });
+
+      return () => unsubscribe();
+    }
+  }, [pixData?.id, isOpen]);
 
   const handleInfoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      // 1. Create PIX in Mercado Pago
+      // 1. Create PIX and Order in Backend
       const { data } = await axios.post('/api/create-pix', {
-        amount: totalPrice,
-        description: `Rifa Premium - Números: ${selectedNumbers.join(', ')}`,
-        payer: {
-          email: 'payer@example.com', // In a real app, collect email
-          first_name: formData.nome,
-          identification: {
-            number: formData.cpf
-          }
-        },
-        external_reference: `${Date.now()}`
-      });
-
-      setPixData(data);
-
-      // 2. Reserve numbers in Firebase
-      await reservarNumeros(selectedNumbers, formData.nome, formData.telefone);
-
-      // 3. Create order in Firebase
-      await createPedido({
-        paymentId: data.id.toString(),
         numeros: selectedNumbers,
         valor: totalPrice,
         nome: formData.nome,
-        telefone: formData.telefone,
-        status: 'pendente',
-        criadoEm: null
+        telefone: formData.telefone
       });
 
+      setPixData(data);
       setStep('payment');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Checkout error:', error);
-      alert('Erro ao processar checkout. Tente novamente.');
+      alert(error.response?.data?.error || 'Erro ao processar checkout. Tente novamente.');
     } finally {
       setLoading(false);
     }
@@ -137,17 +142,6 @@ export default function CheckoutModal({ isOpen, onClose, selectedNumbers, totalP
                         className="w-full bg-white/5 border border-white/10 py-4 pl-12 pr-4 focus:border-neon-green outline-none transition-colors"
                       />
                     </div>
-                    <div className="relative">
-                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/20" />
-                      <input
-                        required
-                        type="text"
-                        placeholder="CPF (apenas números)"
-                        value={formData.cpf}
-                        onChange={e => setFormData({ ...formData, cpf: e.target.value })}
-                        className="w-full bg-white/5 border border-white/10 py-4 pl-12 pr-4 focus:border-neon-green outline-none transition-colors"
-                      />
-                    </div>
                   </div>
 
                   <button
@@ -155,13 +149,13 @@ export default function CheckoutModal({ isOpen, onClose, selectedNumbers, totalP
                     className="w-full btn-primary h-16 flex items-center justify-center text-xl tracking-tighter"
                   >
                     {loading ? (
-                      <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                      <Loader2 className="w-6 h-6 animate-spin" />
                     ) : (
                       'GERAR PAGAMENTO PIX'
                     )}
                   </button>
                 </form>
-              ) : (
+              ) : step === 'payment' ? (
                 <div className="space-y-6 text-center">
                   <div className="bg-white p-4 inline-block rounded-lg shadow-[0_0_40px_rgba(255,255,255,0.1)]">
                     <img 
@@ -172,7 +166,10 @@ export default function CheckoutModal({ isOpen, onClose, selectedNumbers, totalP
                   </div>
 
                   <div className="space-y-3">
-                    <p className="text-sm text-white/60">Aponte a câmera ou copie o código abaixo:</p>
+                    <div className="flex items-center justify-center gap-2 text-neon-green">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <p className="text-xs font-bold uppercase tracking-widest">Aguardando Pagamento...</p>
+                    </div>
                     
                     <div className="flex gap-2">
                       <input
@@ -197,17 +194,20 @@ export default function CheckoutModal({ isOpen, onClose, selectedNumbers, totalP
                     <ol className="text-xs text-white/60 space-y-2 list-decimal ml-4">
                       <li>Abra o app do seu banco</li>
                       <li>Vá em Área PIX {'>'} Ler QR Code ou Copia e Cola</li>
-                      <li>Após o pagamento, o status atualizará automaticamente</li>
-                      <li>A reserva expira em 10 minutos se não houver pagamento</li>
+                      <li>Após o pagamento, esta tela fechará automaticamente</li>
                     </ol>
                   </div>
-
-                  <button
-                    onClick={onClose}
-                    className="w-full py-4 text-white/40 hover:text-white text-xs font-bold uppercase tracking-widest transition-colors"
-                  >
-                    Voltar para a Rifa
-                  </button>
+                </div>
+              ) : (
+                <div className="py-12 text-center space-y-6">
+                  <div className="w-24 h-24 bg-neon-green/20 border-2 border-neon-green rounded-full flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="w-12 h-12 text-neon-green" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black italic uppercase tracking-tighter text-neon-green">PAGAMENTO CONFIRMADO!</h3>
+                    <p className="text-sm text-white/60 mt-2">Seus números foram reservados com sucesso.</p>
+                  </div>
+                  <p className="text-[10px] text-white/20 uppercase font-bold tracking-widest animate-pulse">Recarregando página...</p>
                 </div>
               )}
             </div>

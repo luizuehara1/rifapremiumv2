@@ -4,6 +4,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 
+import axios from 'axios';
 import { adminDb } from './lib/firebase-admin';
 
 async function startServer() {
@@ -13,98 +14,159 @@ async function startServer() {
   app.use(express.json());
 
   // Mercado Pago Config
-  const client = new MercadoPagoConfig({
-    accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN || '',
-  });
-
-  const payment = new Payment(client);
+  const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
 
   // API Routes
   app.post('/api/create-pix', async (req, res) => {
-    try {
-      const { amount, description, payer, external_reference } = req.body;
+    if (!accessToken) {
+      console.log('Mercado Pago Token: Não configurado');
+      return res.status(500).json({ 
+        error: "MERCADO_PAGO_ACCESS_TOKEN não configurado no painel de Secrets." 
+      });
+    }
 
-      const body = {
-        transaction_amount: amount,
-        description: description,
+    console.log('Mercado Pago Token: Existe');
+
+    try {
+      const { numeros, valor, nome, telefone } = req.body;
+
+      if (!numeros || !valor || !nome || !telefone) {
+        return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
+      }
+
+      const paymentData = {
+        transaction_amount: Number(valor),
+        description: `Rifa Premium - Números: ${numeros.join(', ')}`,
         payment_method_id: 'pix',
         payer: {
-          email: payer.email,
-          first_name: payer.first_name,
-          identification: {
-            type: 'CPF',
-            number: payer.identification.number
-          }
+          email: `${telefone}@temp.com`,
+          first_name: nome,
         },
-        external_reference: external_reference,
-        notification_url: `${process.env.APP_URL}/api/webhook`,
+        external_reference: `${Date.now()}`,
       };
 
-      const result = await payment.create({ body });
-      
+      const response = await axios.post('https://api.mercadopago.com/v1/payments', paymentData, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': `${Date.now()}`
+        }
+      });
+
+      const result = response.data;
+      const paymentId = result.id?.toString();
+
+      // Salvar Pedido no Firestore
+      const pedidoData = {
+        paymentId,
+        numeros,
+        valor: Number(valor),
+        nome,
+        telefone,
+        status: 'pendente',
+        criadoEm: new Date(),
+      };
+
+      await adminDb.collection('pedidos').add(pedidoData);
+
+      // Também reservar os números
+      const batch = adminDb.batch();
+      for (const n of numeros) {
+        const numRef = adminDb.collection('numeros').doc(n.toString());
+        batch.set(numRef, {
+          numero: n,
+          status: 'reservado',
+          nome,
+          telefone,
+          updatedAt: new Date()
+        }, { merge: true });
+      }
+      await batch.commit();
+
       res.json({
-        id: result.id,
+        id: paymentId,
         qr_code: result.point_of_interaction?.transaction_data?.qr_code,
         qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
-        ticket_url: result.point_of_interaction?.transaction_data?.ticket_url,
+        payment_id: paymentId
       });
     } catch (error: any) {
-      console.error('Error creating PIX:', error);
-      res.status(500).json({ error: error.message });
+      const apiError = error.response?.data || error.message;
+      console.error('Error creating PIX:', apiError);
+      
+      if (error.response?.status === 401) {
+        return res.status(401).json({ 
+          error: 'Erro de autenticação com o Mercado Pago. Verifique o Access Token.',
+          details: apiError
+        });
+      }
+
+      res.status(500).json({ 
+        error: 'Erro ao criar pagamento no Mercado Pago',
+        details: apiError
+      });
     }
   });
 
   app.post('/api/webhook', async (req, res) => {
+    if (!accessToken) return res.status(500).send('Token missing');
+
     try {
-      const { type, data, action } = req.body;
+      const { query, body } = req;
+      const topic = query.topic || query.type || body.type;
+      const id = query.id || (body.data && body.data.id) || body.id;
 
-      // Handle both formats of Mercado Pago notifications
-      const paymentId = (type === 'payment' && data?.id) || (action === 'payment.updated' && data?.id);
+      console.log(`Webhook received: topic=${topic}, id=${id}`);
 
-      if (paymentId) {
-        const result = await payment.get({ id: paymentId });
-        
-        if (result.status === 'approved') {
-          const externalReference = result.external_reference;
-          
-          // 1. Find the order in Firestore using paymentId
+      if ((topic === 'payment' || topic === 'payment.updated') && id) {
+        const response = await axios.get(`https://api.mercadopago.com/v1/payments/${id}`, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        });
+        const paymentData = response.data;
+
+        if (paymentData.status === 'approved') {
+          const paymentId = paymentData.id?.toString();
+          console.log(`Payment confirmed: ${paymentId}`);
+
           const pedidosRef = adminDb.collection('pedidos');
-          const snapshot = await pedidosRef.where('paymentId', '==', paymentId.toString()).get();
+          const snapshot = await pedidosRef.where('paymentId', '==', paymentId).get();
 
           if (!snapshot.empty) {
             const pedidoDoc = snapshot.docs[0];
             const pedidoData = pedidoDoc.data();
-
+            
             if (pedidoData.status !== 'pago') {
-              // 2. Update order status
-              await pedidoDoc.ref.update({
+              await pedidoDoc.ref.update({ 
                 status: 'pago',
                 pagoEm: new Date()
               });
 
-              // 3. Update numbers status
               const batch = adminDb.batch();
-              const numeros = pedidoData.numeros as number[];
+              const numeros = pedidoData.numeros || [];
               
               for (const n of numeros) {
                 const numRef = adminDb.collection('numeros').doc(n.toString());
-                batch.update(numRef, {
+                batch.set(numRef, {
                   status: 'pago',
+                  reservadoPor: pedidoData.telefone,
+                  nome: pedidoData.nome,
+                  timestampReserva: Date.now(),
                   updatedAt: new Date()
-                });
+                }, { merge: true });
               }
-
+              
               await batch.commit();
-              console.log(`Success: Order ${pedidoDoc.id} and numbers [${numeros.join(', ')}] updated to PAGO`);
+              console.log(`Pedido e números atualizados para PAGO`);
             }
           }
         }
       }
 
-      res.sendStatus(200);
-    } catch (error) {
-      console.error('Webhook error:', error);
-      res.sendStatus(200); // Always return 200 to MP to avoid loops, but log the error
+      res.status(200).send('OK');
+    } catch (error: any) {
+      console.error('Webhook processing error:', error.response?.data || error.message);
+      res.status(200).send('OK');
     }
   });
 
