@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
 import Header from '../components/Header';
 import RaffleGrid from '../components/RaffleGrid';
+import MyOrders from '../components/MyOrders';
 import CheckoutModal from '../components/CheckoutModal';
 import { useNumerosRealtime } from '../hooks/useNumerosRealtime';
 import { usePedidosRealtime } from '../hooks/usePedidosRealtime';
@@ -101,6 +102,9 @@ export default function Home() {
                 />
               )}
             </div>
+
+            {/* My Orders Section */}
+            <MyOrders />
 
             {/* Recent Activity Table (Same as Admin) */}
             <div className="card-brutal">
