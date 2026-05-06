@@ -62,7 +62,14 @@ export default function CheckoutModal({ isOpen, onClose, selectedNumbers, totalP
       setStep('payment');
     } catch (error: any) {
       console.error('Checkout error:', error);
-      alert(error.response?.data?.error || 'Erro ao processar checkout. Tente novamente.');
+      
+      const errorMessage = 
+        error?.response?.data?.error || 
+        error?.response?.data?.details?.message ||
+        error?.message || 
+        'Erro ao processar checkout. Tente novamente.';
+
+      alert(errorMessage);
     } finally {
       setLoading(false);
     }

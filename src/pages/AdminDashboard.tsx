@@ -89,9 +89,9 @@ export default function AdminDashboard() {
       }
       
       setManualForm({ numero: '', nome: '', telefone: '', status: 'pago' });
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Erro ao processar');
+      alert('Erro ao processar: ' + (err.message || 'Erro desconhecido'));
     }
   };
 
@@ -110,9 +110,9 @@ export default function AdminDashboard() {
     try {
       await resetRifa(100);
       alert('Rifa resetada com sucesso!');
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Erro ao resetar rifa');
+      alert('Erro ao resetar rifa: ' + (err.message || 'Erro desconhecido'));
     } finally {
       setReseting(false);
     }
