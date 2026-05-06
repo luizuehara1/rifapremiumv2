@@ -6,10 +6,13 @@ import {
 import { 
   usePedidosRealtime 
 } from '../hooks/usePedidosRealtime';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   updateNumeroStatus, 
   resetRifa,
-  reservarNumeros 
+  reservarNumeros,
+  createPedido
 } from '../firebase/services';
 import { formatCurrency, cn } from '../lib/utils';
 import { 
@@ -26,7 +29,8 @@ import {
   ExternalLink,
   CheckCircle2,
   Clock,
-  Ban
+  Ban,
+  FileDown
 } from 'lucide-react';
 import { auth } from '../firebase/config';
 import { useNavigate } from 'react-router-dom';
@@ -34,7 +38,7 @@ import { Numero } from '../types';
 
 export default function AdminDashboard() {
   const { numeros, loading: loadingNumeros } = useNumerosRealtime();
-  const { pedidos, loading: loadingPedidos } = usePedidosRealtime(50);
+  const { pedidos, loading: loadingPedidos } = usePedidosRealtime(500);
   
   const [selectedNum, setSelectedNum] = useState<Numero | null>(null);
   const [manualForm, setManualForm] = useState({ 
@@ -64,6 +68,12 @@ export default function AdminDashboard() {
     e.preventDefault();
     if (!manualForm.numero) return;
     
+    // Validate name is present for paid/reserved status
+    if ((manualForm.status === 'pago' || manualForm.status === 'reservado') && !manualForm.nome) {
+      alert('Favor informar o nome do cliente para esta ação.');
+      return;
+    }
+    
     const numId = manualForm.numero;
     const existing = numeros.find(n => n.id === numId);
     
@@ -84,23 +94,109 @@ export default function AdminDashboard() {
         if (manualForm.status === 'pago') {
           await updateNumeroStatus(numId, 'pago');
         }
+
+        // Create a record in history (pedidos)
+        await createPedido({
+          nome: manualForm.nome || 'Venda Manual',
+          telefone: manualForm.telefone || 'Admin',
+          numeros: [parseInt(numId)],
+          valor: 20, // Base price for single number
+          status: manualForm.status === 'pago' ? 'pago' : 'pendente',
+          paymentId: `MANUAL-${Date.now()}`
+        });
       } else {
         await updateNumeroStatus(numId, manualForm.status);
       }
       
       setManualForm({ numero: '', nome: '', telefone: '', status: 'pago' });
+      alert('Operação realizada com sucesso!');
     } catch (err: any) {
       console.error(err);
       alert('Erro ao processar: ' + (err.message || 'Erro desconhecido'));
     }
   };
 
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    
+    // Add title
+    doc.setFontSize(18);
+    doc.text("Relatório de Vendas - Rifa Prime", 14, 20);
+    
+    // Add date
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 30);
+
+    // Prepare table data
+    const tableData = filteredPedidos.map(p => [
+      p.nome || 'N/A',
+      p.numeros?.join(', ') || 'N/A',
+      formatCurrency(p.valor),
+      p.status.toUpperCase(),
+      p.criadoEm?.toDate?.() ? p.criadoEm.toDate().toLocaleString('pt-BR') : 'N/A'
+    ]);
+
+    autoTable(doc, {
+      head: [['Cliente', 'Números', 'Valor', 'Status', 'Data']],
+      body: tableData,
+      startY: 40,
+      theme: 'grid',
+      headStyles: { fillColor: [0, 255, 0], textColor: [0, 0, 0], fontStyle: 'bold' },
+      styles: { fontSize: 9 }
+    });
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    doc.save(`vendas-rifa-prime-${dateStr}.pdf`);
+  };
+
   const updateStatus = async (id: string, status: Numero['status']) => {
     try {
-      await updateNumeroStatus(id, status);
+      let nome = selectedNum?.reservadoPor;
+      let telefone = selectedNum?.telefone;
+
+      if (status === 'pago' || status === 'reservado') {
+        if (!nome) {
+          const inputNome = prompt('Favor informar o nome do cliente:');
+          if (!inputNome) return; // Cancel if no name
+          nome = inputNome;
+        }
+        if (!telefone) {
+          telefone = prompt('Favor informar o WhatsApp (opcional):') || 'Admin';
+        }
+
+        // If it was already reserved, we should check if data is there
+        if (status === 'pago' && selectedNum?.status === 'reservado') {
+          await updateNumeroStatus(id, 'pago');
+        } else {
+          // Reservar first to set the metadata if not already set
+          await reservarNumeros(
+            [parseInt(selectedNum!.numero.toString())],
+            nome,
+            telefone || 'Admin'
+          );
+          if (status === 'pago') {
+            await updateNumeroStatus(id, 'pago');
+          }
+        }
+
+        // Create a record in history (pedidos)
+        await createPedido({
+          nome: nome,
+          telefone: telefone || 'Admin',
+          numeros: [parseInt(selectedNum!.numero.toString())],
+          valor: 20,
+          status: status === 'pago' ? 'pago' : 'pendente',
+          paymentId: `MANUAL-UPD-${Date.now()}`
+        });
+      } else {
+        await updateNumeroStatus(id, status);
+      }
+      
       setSelectedNum(null);
     } catch (err) {
       console.error(err);
+      alert('Erro ao atualizar status');
     }
   };
 
@@ -272,15 +368,25 @@ export default function AdminDashboard() {
                   <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Sincronizado com Mercado Pago</p>
                 </div>
                 
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
-                  <input 
-                    type="text"
-                    placeholder="Buscar pedido..."
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                    className="bg-white/5 border border-white/10 pl-10 pr-4 py-2 text-sm focus:border-neon-green outline-none w-full md:w-64"
-                  />
+                <div className="flex items-center gap-4">
+                  <button 
+                    onClick={exportToPDF}
+                    className="flex items-center gap-2 p-2 px-4 bg-white/5 border border-white/10 hover:border-neon-green text-white transition-all text-[10px] font-black uppercase tracking-widest"
+                  >
+                    <FileDown className="w-4 h-4 text-neon-green" />
+                    Exportar PDF
+                  </button>
+
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
+                    <input 
+                      type="text"
+                      placeholder="Buscar pedido..."
+                      value={searchTerm}
+                      onChange={e => setSearchTerm(e.target.value)}
+                      className="bg-white/5 border border-white/10 pl-10 pr-4 py-2 text-sm focus:border-neon-green outline-none w-full md:w-64"
+                    />
+                  </div>
                 </div>
               </div>
 

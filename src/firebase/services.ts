@@ -23,7 +23,7 @@ export const getRifa = async (id: string) => {
 };
 
 // Pedido Services
-export const createPedido = async (pedido: Omit<Pedido, 'id'>) => {
+export const createPedido = async (pedido: Omit<Pedido, 'id' | 'criadoEm'>) => {
   const pedidoRef = doc(collection(db, 'pedidos'));
   await setDoc(pedidoRef, {
     ...pedido,
