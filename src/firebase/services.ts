@@ -79,7 +79,7 @@ export const updateNumeroStatus = async (id: string, status: Numero['status']) =
 
 // Admin Services
 export const checkAdmin = async (email: string) => {
-  const masterAdmins = ['luiz.uehara1@gmail.com', 'lopesvinicius199@gmail.com'];
+  const masterAdmins = ['luiz.uehara1@gmail.com', 'lopesvinicius199@gmail.com', 'fabriciocosta54964@gmail.com'];
   if (masterAdmins.includes(email)) return true;
   
   const docRef = doc(db, 'admins', email);
